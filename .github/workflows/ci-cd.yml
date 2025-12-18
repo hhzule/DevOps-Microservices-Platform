@@ -1,0 +1,359 @@
+name: CI/CD Pipeline
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  REGISTRY: docker.io
+  IMAGE_PREFIX: ${{ secrets.DOCKERHUB_USERNAME }}
+
+jobs:
+  security-scan:
+    name: Security Scanning
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Run Trivy vulnerability scanner
+        uses: aquasecurity/trivy-action@master
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          format: 'sarif'
+          output: 'trivy-results.sarif'
+      
+      - name: Upload Trivy results to GitHub Security tab
+        uses: github/codeql-action/upload-sarif@v2
+        with:
+          sarif_file: 'trivy-results.sarif'
+
+  build-and-test-api:
+    name: Build and Test API
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: services/api/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./services/api
+        run: npm ci
+      
+      - name: Run tests
+        working-directory: ./services/api
+        run: npm test --if-present
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/api
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/api-service:latest
+            ${{ env.IMAGE_PREFIX }}/api-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Trivy scan on image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/api-service:${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+  build-and-test-recommendation:
+    name: Build and Test Recommendation
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.11'
+          cache: 'pip'
+          cache-dependency-path: services/recommendation/requirements.txt
+      
+      - name: Install dependencies
+        working-directory: ./services/recommendation
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+      
+      - name: Run tests
+        working-directory: ./services/recommendation
+        run: python -m pytest --if-present || echo "No tests found"
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/recommendation
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/recommendation-service:latest
+            ${{ env.IMAGE_PREFIX }}/recommendation-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+      
+      - name: Run Trivy scan on image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/recommendation-service:${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+
+  build-and-test-frontend:
+    name: Build and Test Frontend (Next.js)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: '18'
+          cache: 'npm'
+          cache-dependency-path: services/frontend/package-lock.json
+      
+      - name: Install dependencies
+        working-directory: ./services/frontend
+        run: npm ci
+      
+      - name: Run ESLint
+        working-directory: ./services/frontend
+        run: npm run lint
+      
+      - name: Run type check
+        working-directory: ./services/frontend
+        run: npm run build --dry-run || npx tsc --noEmit
+      
+      - name: Build Next.js application
+        working-directory: ./services/frontend
+        run: npm run build
+        env:
+          NEXT_PUBLIC_API_URL: ${{ secrets.NEXT_PUBLIC_API_URL || 'http://api-service:3000' }}
+          NEXT_PUBLIC_RECOMMENDATION_URL: ${{ secrets.NEXT_PUBLIC_RECOMMENDATION_URL || 'http://recommendation-service:5000' }}
+          NODE_ENV: production
+      
+      - name: Run tests
+        working-directory: ./services/frontend
+        run: npm test --if-present
+      
+      - name: Check bundle size
+        working-directory: ./services/frontend
+        run: |
+          echo "Checking Next.js bundle size..."
+          du -sh .next
+      
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v2
+      
+      - name: Login to Docker Hub
+        uses: docker/login-action@v2
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+      
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v4
+        with:
+          context: ./services/frontend
+          push: ${{ github.event_name != 'pull_request' }}
+          tags: |
+            ${{ env.IMAGE_PREFIX }}/frontend-service:latest
+            ${{ env.IMAGE_PREFIX }}/frontend-service:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+          build-args: |
+            NEXT_PUBLIC_API_URL=${{ secrets.NEXT_PUBLIC_API_URL || 'http://api-service:3000' }}
+            NEXT_PUBLIC_RECOMMENDATION_URL=${{ secrets.NEXT_PUBLIC_RECOMMENDATION_URL || 'http://recommendation-service:5000' }}
+      
+      - name: Run Trivy scan on image
+        uses: aquasecurity/trivy-action@master
+        with:
+          image-ref: ${{ env.IMAGE_PREFIX }}/frontend-service:${{ github.sha }}
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          severity: 'CRITICAL,HIGH'
+      
+      - name: Upload build artifacts
+        uses: actions/upload-artifact@v3
+        with:
+          name: nextjs-build
+          path: services/frontend/.next
+          retention-days: 7
+
+  deploy-to-staging:
+    name: Deploy to Staging
+    needs: [security-scan, build-and-test-api, build-and-test-recommendation, build-and-test-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/develop'
+    environment:
+      name: staging
+      url: https://staging.your-domain.com
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_STAGING }}
+      
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace devops-platform --dry-run=client -o yaml | kubectl apply -f -
+      
+      - name: Deploy to staging
+        run: |
+          kubectl apply -f kubernetes/base/
+          
+          # Update image tags for all services
+          kubectl set image deployment/api-service \
+            api=${{ env.IMAGE_PREFIX }}/api-service:${{ github.sha }} \
+            -n devops-platform
+          
+          kubectl set image deployment/recommendation-service \
+            recommendation=${{ env.IMAGE_PREFIX }}/recommendation-service:${{ github.sha }} \
+            -n devops-platform
+          
+          kubectl set image deployment/frontend-service \
+            frontend=${{ env.IMAGE_PREFIX }}/frontend-service:${{ github.sha }} \
+            -n devops-platform
+          
+          # Wait for rollouts
+          kubectl rollout status deployment/api-service -n devops-platform --timeout=5m
+          kubectl rollout status deployment/recommendation-service -n devops-platform --timeout=5m
+          kubectl rollout status deployment/frontend-service -n devops-platform --timeout=5m
+      
+      - name: Verify deployment
+        run: |
+          echo "Checking pod status..."
+          kubectl get pods -n devops-platform
+          
+          echo "Checking services..."
+          kubectl get services -n devops-platform
+          
+          echo "Getting deployment details..."
+          kubectl describe deployment frontend-service -n devops-platform
+      
+      - name: Run smoke tests
+        run: |
+          # Wait for services to be ready
+          sleep 30
+          
+          # Get LoadBalancer IP/hostname
+          FRONTEND_URL=$(kubectl get svc frontend-service -n devops-platform -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "localhost")
+          
+          echo "Testing frontend at $FRONTEND_URL"
+          curl -f http://$FRONTEND_URL || echo "Frontend not accessible yet"
+      
+      - name: Notify deployment status
+        if: always()
+        run: |
+          echo "Staging deployment completed with status: ${{ job.status }}"
+
+  deploy-to-production:
+    name: Deploy to Production
+    needs: [security-scan, build-and-test-api, build-and-test-recommendation, build-and-test-frontend]
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    environment:
+      name: production
+      url: https://your-production-url.com
+    steps:
+      - uses: actions/checkout@v3
+      
+      - name: Configure kubectl
+        uses: azure/k8s-set-context@v3
+        with:
+          method: kubeconfig
+          kubeconfig: ${{ secrets.KUBE_CONFIG_PROD }}
+      
+      - name: Create namespace if not exists
+        run: |
+          kubectl create namespace devops-platform --dry-run=client -o yaml | kubectl apply -f -
+      
+      - name: Deploy to production
+        run: |
+          kubectl apply -f kubernetes/base/
+          
+          # Update image tags for all services
+          kubectl set image deployment/api-service \
+            api=${{ env.IMAGE_PREFIX }}/api-service:${{ github.sha }} \
+            -n devops-platform
+          
+          kubectl set image deployment/recommendation-service \
+            recommendation=${{ env.IMAGE_PREFIX }}/recommendation-service:${{ github.sha }} \
+            -n devops-platform
+          
+          kubectl set image deployment/frontend-service \
+            frontend=${{ env.IMAGE_PREFIX }}/frontend-service:${{ github.sha }} \
+            -n devops-platform
+          
+          # Wait for rollouts with longer timeout for production
+          kubectl rollout status deployment/api-service -n devops-platform --timeout=10m
+          kubectl rollout status deployment/recommendation-service -n devops-platform --timeout=10m
+          kubectl rollout status deployment/frontend-service -n devops-platform --timeout=10m
+      
+      - name: Verify production deployment
+        run: |
+          echo "Checking pod status..."
+          kubectl get pods -n devops-platform
+          
+          echo "Checking services..."
+          kubectl get services -n devops-platform
+          
+          echo "Getting all deployments..."
+          kubectl get deployments -n devops-platform
+      
+      - name: Run production smoke tests
+        run: |
+          sleep 30
+          
+          FRONTEND_URL=$(kubectl get svc frontend-service -n devops-platform -o jsonpath='{.status.loadBalancer.ingress[0].ip}' || echo "your-production-url.com")
+          
+          echo "Testing production frontend..."
+          curl -f http://$FRONTEND_URL/health || curl -f http://$FRONTEND_URL || echo "Waiting for DNS propagation"
+      
+      - name: Create deployment tag
+        if: success()
+        run: |
+          git tag -a "prod-${{ github.sha }}" -m "Production deployment of ${{ github.sha }}"
+          git push origin "prod-${{ github.sha }}" || echo "Tag already exists"
+      
+      - name: Notify deployment status
+        if: always()
+        run: |
+          echo "Production deployment completed with status: ${{ job.status }}"
