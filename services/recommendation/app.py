@@ -1,6 +1,7 @@
 from flask import Flask, jsonify, request
 import redis
 import numpy as np
+from flask_cors import CORS
 from sklearn.metrics.pairwise import cosine_similarity
 import json
 import os
@@ -8,13 +9,13 @@ from prometheus_client import Counter, Histogram, generate_latest, REGISTRY
 import time
 
 app = Flask(__name__)
-
+CORS(app, origins=["http://localhost:3000"]) 
 # Prometheus metrics
 REQUEST_COUNT = Counter('recommendation_requests_total', 'Total recommendation requests')
 REQUEST_DURATION = Histogram('recommendation_request_duration_seconds', 'Request duration')
 
 redis_client = redis.Redis(
-    host=os.getenv('REDIS_HOST', 'redis'),
+    host=os.getenv('REDIS_HOST', '127.0.0.1'),
     port=int(os.getenv('REDIS_PORT', 6379)),
     decode_responses=True
 )

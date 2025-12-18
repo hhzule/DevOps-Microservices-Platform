@@ -20,7 +20,7 @@ services:
   api:
     build: ./services/api
     ports:
-      - "3000:3000"
+      - "3003:3003"
     environment:
       - MONGODB_URI=mongodb://mongodb:27017/products
       - REDIS_URL=redis://redis:6379
@@ -50,7 +50,7 @@ services:
     ports:
       - "3001:3000"
     environment:
-      - NEXT_PUBLIC_API_URL=http://api:3000
+      - NEXT_PUBLIC_API_URL=http://api:3003
       - NEXT_PUBLIC_RECOMMENDATION_URL=http://recommendation:5000
       - NODE_ENV=production
     depends_on:

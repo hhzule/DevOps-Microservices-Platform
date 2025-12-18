@@ -2,8 +2,8 @@
 
 import { useState, useEffect } from 'react'
 import axios from 'axios'
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3000'
+import HealthCheck from "./Components/Health"
+const API_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:3003'
 const RECOMMENDATION_URL = process.env.NEXT_PUBLIC_RECOMMENDATION_URL || 'http://localhost:5000'
 
 interface Product {
@@ -13,6 +13,7 @@ interface Product {
   price: number
   category: string
   stock: number
+  
 }
 
 interface Recommendation {
@@ -40,7 +41,9 @@ export default function Home() {
 
   const fetchProducts = async () => {
     try {
+      console.log("res======>",`${API_URL}/api/products`)
       const response = await axios.get<Product[]>(`${API_URL}/api/products`)
+    console.log("res======>",response)
       setProducts(response.data)
       setLoading(false)
     } catch (error) {
@@ -160,27 +163,7 @@ export default function Home() {
         </section>
 
         {/* Health Status */}
-        <section className="mt-12">
-          <div className="bg-white rounded-lg shadow-md p-6">
-            <h3 className="text-xl font-semibold text-gray-800 mb-4">
-              System Health
-            </h3>
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              <div className="flex items-center space-x-3">
-                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-gray-700">API Service: Online</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-gray-700">Recommendation: Online</span>
-              </div>
-              <div className="flex items-center space-x-3">
-                <div className="w-3 h-3 bg-green-500 rounded-full animate-pulse"></div>
-                <span className="text-gray-700">Database: Connected</span>
-              </div>
-            </div>
-          </div>
-        </section>
+<HealthCheck/>
       </main>
 
       {/* Footer */}

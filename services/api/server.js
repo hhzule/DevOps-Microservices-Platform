@@ -7,7 +7,7 @@ const rateLimit = require('express-rate-limit');
 const promClient = require('prom-client');
 
 const app = express();
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 3003;
 
 // Prometheus metrics
 const register = new promClient.Registry();
@@ -22,7 +22,13 @@ const httpRequestDuration = new promClient.Histogram({
 
 // Middleware
 app.use(helmet());
-app.use(cors());
+app.use(
+  cors({
+    origin: 'http://localhost:3000', // your frontend
+    methods: ['GET', 'POST', 'PUT', 'DELETE'],
+    credentials: true, // if sending cookies
+  })
+);
 app.use(express.json());
 
 const limiter = rateLimit({
@@ -32,14 +38,16 @@ const limiter = rateLimit({
 app.use(limiter);
 
 // MongoDB connection
-mongoose.connect(process.env.MONGODB_URI || 'mongodb://mongo:27017/products', {
+mongoose.connect(process.env.MONGODB_URI  || 'mongodb://127.0.0.1:27017/products'
+  , {
   useNewUrlParser: true,
   useUnifiedTopology: true
 });
 
 // Redis client
 const redisClient = redis.createClient({
-  url: process.env.REDIS_URL || 'redis://redis:6379'
+  url: process.env.REDIS_URL
+  //  || 'redis://redis:6379'
 });
 redisClient.connect();
 
